@@ -1,0 +1,31 @@
+import os
+import torch
+import torchvision
+import torchvision.transforms as transforms
+from conf import mean, std, image_size, batch_size
+
+dataset_class = torchvision.datasets.CIFAR10
+
+transform_train = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.Resize(image_size),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize(mean, std),
+])
+
+transform_test = transforms.Compose([
+    transforms.Resize(image_size),
+    transforms.ToTensor(),
+    transforms.Normalize(mean, std),
+])
+
+root_path = os.path.join(os.path.dirname(__file__), "datasets")
+print(root_path)
+
+# Prepare dataset
+train_set = dataset_class(root=root_path, train=True, download=True, transform=transform_train)
+train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=8)
+
+test_set = dataset_class(root=root_path, train=False, download=True, transform=transform_test)
+test_loader = torch.utils.data.DataLoader(test_set, batch_size=100, shuffle=False, num_workers=8)
