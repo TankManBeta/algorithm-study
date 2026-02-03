@@ -1,6 +1,8 @@
 import os
-import csv
+import math
 import time
+import wandb
+import logging
 import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
@@ -11,12 +13,44 @@ from utils.util import progress_bar
 from data import train_loader, test_loader
 from models.model.vision_transformer import VisionTransformer
 
+timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+dir_stat = os.path.join(os.path.dirname(__file__), "results", timestamp, "statistics")
+dir_ckpt = os.path.join(os.path.dirname(__file__), "results", timestamp, "checkpoints")
+os.makedirs(dir_stat, exist_ok=True)
+os.makedirs(dir_ckpt, exist_ok=True)
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    filename=f"{dir_stat}/output.log",
+    filemode="a"
+)
+logger = logging.getLogger(__name__)
+
+wandb.init(
+    project="algorithm-vision-transformer",
+    name=timestamp,
+    config={
+        "epoch": n_epochs,
+        "batch_size": batch_size,
+        "d_model": mlp_dim,
+        "n_layers": depth,
+        "n_heads": heads,
+        "lr": lr,
+        "dropout": dropout,
+        "optimizer": "Adam"
+    }
+)
 
 criterion = nn.CrossEntropyLoss()
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 # train
-def train(epoch):
-    print("\nEpoch: %d" % epoch)
+def train():
     net.train()
     train_loss = 0
     correct = 0
@@ -38,11 +72,12 @@ def train(epoch):
         correct += predicted.eq(targets).sum().item()
 
         progress_bar(batch_idx, len(train_loader), "Loss: %.3f | Acc: %.3f%% (%d/%d)" % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        logger.info(f"Step: {round((batch_idx / len(train_loader)) * 100, 2):.2f}% , loss: {loss.item()}")
     return train_loss/(batch_idx+1)
 
 
 # Validation
-def test(epoch, dir_stat, dir_ckpt):
+def test(dir_stat, dir_ckpt):
     global best_acc
     net.eval()
     test_loss = 0
@@ -63,7 +98,7 @@ def test(epoch, dir_stat, dir_ckpt):
     # Save checkpoint.
     acc = 100.*correct/total
     if acc > best_acc:
-        print("Saving..")
+        print("Saving models...")
         state = {
             "net": net.state_dict(),
             "optimizer": optimizer.state_dict(),
@@ -76,11 +111,9 @@ def test(epoch, dir_stat, dir_ckpt):
         best_acc = acc
     
     # Log
-    content = time.ctime() + ' ' + f"Epoch {epoch}, lr: {optimizer.param_groups[0]['lr']:.7f}, val loss: {test_loss:.5f}, acc: {(acc):.5f}"
+    content = time.ctime() + ' ' + f"Epoch {epoch+1}, lr: {optimizer.param_groups[0]['lr']:.7f}, val loss: {test_loss:.5f}, acc: {(acc):.5f}"
     print(content)
-    log_file = os.path.join(dir_stat, f"log_vit_cifar10_patch{patch_size}.txt")
-    with open(log_file, 'a') as appender:
-        appender.write(content + "\n")
+    logger.info(content)
     return test_loss, acc
 
 
@@ -88,7 +121,9 @@ if __name__ == "__main__":
     best_acc = 0
     start_epoch = 0
     net = VisionTransformer(image_size=image_size, patch_size=patch_size, num_classes=num_classes, dim=dim_head, depth=depth, heads=heads, mlp_dim=mlp_dim, dropout=dropout, emb_dropout=emb_dropout)
-    print(device)
+    logger.info(f"The model has {count_parameters(net):,} trainable parameters")
+    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
     # make parallel
     net = torch.nn.DataParallel(net)
     cudnn.benchmark = True
@@ -96,30 +131,25 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs)
     scaler = torch.amp.GradScaler(enabled=False)
     
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    dir_stat = os.path.join(os.path.dirname(__file__), "results", timestamp, "statistics")
-    dir_ckpt = os.path.join(os.path.dirname(__file__), "results", timestamp, "checkpoints")
-    os.makedirs(dir_stat, exist_ok=True)
-    os.makedirs(dir_ckpt, exist_ok=True)
-    
-    list_loss = []
-    list_acc = []
     # net.cuda()
     for epoch in range(start_epoch, n_epochs):
         start = time.time()
-        train_loss = train(epoch)
-        val_loss, acc = test(epoch, dir_stat, dir_ckpt)
+        train_loss = train()
+        val_loss, acc = test(dir_stat, dir_ckpt)
         
         # step cosine scheduling
         scheduler.step(epoch-1)
         
-        list_loss.append(val_loss)
-        list_acc.append(acc)
-
-        # Write out csv.
-        csv_file = os.path.join(dir_stat, f"log_vit_cifar10_patch{patch_size}.csv")
-        with open(csv_file, 'w') as f:
-            writer = csv.writer(f, lineterminator='\n')
-            writer.writerow(list_loss)
-            writer.writerow(list_acc)
-        print(list_loss)
+        logger.info(f"Epoch: {epoch + 1}")
+        logger.info(f"\tTrain Loss: {train_loss:.3f}")
+        logger.info(f"\tValid Loss: {val_loss:.3f}")
+        logger.info(f"\tAccuracy: {acc:.3f}")
+        
+        wandb.log({
+            "epoch": epoch+1,
+            "train/loss": train_loss,
+            "valid/loss": val_loss,
+            "valid/acc": acc,
+            "lr": optimizer.param_groups[0]["lr"]
+        })
+        

@@ -1,12 +1,26 @@
 import os
+import math
+import time
+import wandb
+import logging
+from torch import nn, optim
+from torch.optim import Adam
 from datetime import datetime
+
+from conf import *
+from data import *
+from utils.util import progress_bar
+from utils.epoch_timer import epoch_time
+from utils.bleu import idx_to_word, get_bleu
+from models.model.transformer import Transformer
+
+
 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 dir_stat = os.path.join(os.path.dirname(__file__), "results", timestamp, "statistics")
 dir_ckpt = os.path.join(os.path.dirname(__file__), "results", timestamp, "checkpoints")
 os.makedirs(dir_stat, exist_ok=True)
 os.makedirs(dir_ckpt, exist_ok=True)
 
-import logging
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
@@ -16,17 +30,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-import math
-import time
-from conf import *
-
-from torch import nn, optim
-from torch.optim import Adam
-
-from data import *
-from models.model.transformer import Transformer
-from utils.bleu import idx_to_word, get_bleu
-from utils.epoch_timer import epoch_time
+wandb.init(
+    project="algorithm-transformer",
+    name=timestamp,
+    config={
+        "epoch": epoch,
+        "batch_size": batch_size,
+        "d_model": d_model,
+        "n_layers": n_layers,
+        "n_heads": n_heads,
+        "lr": init_lr,
+        "dropout": drop_prob,
+        "optimizer": "Adam"
+    }
+)
 
 
 def count_parameters(model):
@@ -55,6 +72,8 @@ def train(model, iterator, optimizer, criterion, clip):
         optimizer.step()
 
         epoch_loss += loss.item()
+        
+        progress_bar(i, len(iterator), "Loss: %.3f" % (epoch_loss/(i+1)))
         logger.info(f"Step: {round((i / len(iterator)) * 100, 2):.2f}% , loss: {loss.item()}")
 
     return epoch_loss / len(iterator)
@@ -88,14 +107,13 @@ def evaluate(model, iterator, criterion):
 
             total_bleu = sum(total_bleu) / len(total_bleu)
             batch_bleu.append(total_bleu)
+            progress_bar(i, len(iterator), "Loss: %.3f | BLEU: %.3f" % (epoch_loss/(i+1), total_bleu))
 
     batch_bleu = sum(batch_bleu) / len(batch_bleu)
     return epoch_loss / len(iterator), batch_bleu
 
 
 def run(total_epoch, best_loss):
-    train_losses, valid_losses, bleus = [], [], []
-    
     for step in range(total_epoch):
         start_time = time.time()
         train_loss = train(model, train_iter, optimizer, criterion, clip)
@@ -105,31 +123,24 @@ def run(total_epoch, best_loss):
         if step > warmup:
             scheduler.step(valid_loss)
 
-        train_losses.append(train_loss)
-        valid_losses.append(valid_loss)
-        bleus.append(bleu)
         epoch_mins, epoch_secs = epoch_time(start_time, end_time)
 
         if valid_loss < best_loss:
             best_loss = valid_loss
-            torch.save(model.state_dict(), f"{dir_ckpt}/model-{valid_loss}.pt")
-
-        f = open(f"{dir_stat}/train_loss.txt", 'w')
-        f.write(str(train_losses))
-        f.close()
-
-        f = open(f"{dir_stat}/bleu.txt", 'w')
-        f.write(str(bleus))
-        f.close()
-
-        f = open(f"{dir_stat}/valid_loss.txt", 'w')
-        f.write(str(valid_losses))
-        f.close()
+            torch.save(model.state_dict(), f"{dir_ckpt}/transformer_multi30k_best.pt")
 
         logger.info(f"Epoch: {step + 1} | Time: {epoch_mins}m {epoch_secs}s")
         logger.info(f"\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}")
         logger.info(f"\tValid Loss: {valid_loss:.3f} |  Valid PPL: {math.exp(valid_loss):7.3f}")
         logger.info(f"\tBLEU Score: {bleu:.3f}")
+        
+        wandb.log({
+            "epoch": step+1,
+            "train/loss": train_loss,
+            "valid/loss": valid_loss,
+            "valid/bleu": bleu,
+            "lr": optimizer.param_groups[0]["lr"]
+        })
 
 
 if __name__ == "__main__":
@@ -147,6 +158,8 @@ if __name__ == "__main__":
                         device=device).to(device)
     
     logger.info(f"The model has {count_parameters(model):,} trainable parameters")
+    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
     model.apply(initialize_weights)
     optimizer = Adam(params=model.parameters(),
                     lr=init_lr,
@@ -154,7 +167,6 @@ if __name__ == "__main__":
                     eps=adam_eps)
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer,
-                                                    verbose=True,
                                                     factor=factor,
                                                     patience=patience)
 
