@@ -2,10 +2,9 @@ import os
 import logging
 import torch
 from torch.utils.data import DataLoader as TorchDataLoader
-from torchtext.datasets import Multi30k
-from torchtext.vocab import build_vocab_from_iterator
+from datasets import load_dataset
+from collections import Counter
 from types import SimpleNamespace
-
 
 SPECIAL_TOKENS = {
     "unk": "<unk>",
@@ -14,6 +13,38 @@ SPECIAL_TOKENS = {
     "eos": "<eos>",
 }
 
+class Vocab:
+    def __init__(self, counter, min_freq=1, specials=None):
+        if specials is None:
+            specials = []
+        self.itos = list(specials)
+        self.stoi = {tok: i for i, tok in enumerate(specials)}
+        for tok, freq in counter.items():
+            if freq >= min_freq and tok not in self.stoi:
+                self.stoi[tok] = len(self.itos)
+                self.itos.append(tok)
+        self.unk_index = self.stoi[specials[0]] if specials else None
+
+    def __len__(self):
+        return len(self.itos)
+
+    def __getitem__(self, token):
+        return self.stoi.get(token, self.unk_index)
+
+    def get_stoi(self):
+        return self.stoi
+
+    def get_itos(self):
+        return self.itos[:]
+
+    def set_default_index(self, index):
+        self.unk_index = index
+
+def build_vocab_from_iterator(token_iterator, min_freq, specials):
+    counter = Counter()
+    for tokens in token_iterator:
+        counter.update(tokens)
+    return Vocab(counter, min_freq=min_freq, specials=specials)
 
 class _VocabAdapter:
     def __init__(self, vocab):
@@ -23,7 +54,6 @@ class _VocabAdapter:
 
     def __len__(self):
         return len(self._vocab)
-
 
 class DataLoader:
     source = None
@@ -47,39 +77,35 @@ class DataLoader:
         return mapping[self.ext[0]], mapping[self.ext[1]]
 
     def make_dataset(self):
-        src_lang, tgt_lang = self._ext_to_lang_pair()
-        train_data = Multi30k(root=self.root, split="train", language_pair=(src_lang, tgt_lang))
-        valid_data = Multi30k(root=self.root, split="valid", language_pair=(src_lang, tgt_lang))
-        test_data = Multi30k(root=self.root, split="test", language_pair=(src_lang, tgt_lang))
+        hf_data = load_dataset("bentrevett/multi30k")
+        train_data = hf_data["train"]
+        valid_data = hf_data["validation"]
+        test_data = hf_data["test"]
         return train_data, valid_data, test_data
 
-    def _iter_tokenized(self, dataset_iter, is_src):
-        for src_text, tgt_text in dataset_iter:
-            if is_src:
-                tokens = self.tokenize_en(src_text.lower()) if self.ext[0] == ".en" else self.tokenize_de(src_text.lower())
-            else:
-                tokens = self.tokenize_en(tgt_text.lower()) if self.ext[1] == ".en" else self.tokenize_de(tgt_text.lower())
-            # 与旧 Field 行为一致：在两侧都加入 <sos>/<eos>
+    def _iter_tokenized(self, dataset, is_src):
+        src_lang, tgt_lang = self._ext_to_lang_pair()
+        lang = src_lang if is_src else tgt_lang
+        tokenize = self.tokenize_en if lang == "en" else self.tokenize_de
+        for example in dataset:
+            text = example[lang].lower()
+            tokens = tokenize(text)
             yield [self.init_token] + tokens + [self.eos_token]
 
     def build_vocab(self, train_data, min_freq):
-        # 由于 Multi30k 的迭代器是一次性可迭代对象，需各自重新创建
-        train_src_iter = Multi30k(root=self.root, split="train", language_pair=self._ext_to_lang_pair())
-        train_tgt_iter = Multi30k(root=self.root, split="train", language_pair=self._ext_to_lang_pair())
-
         specials = [SPECIAL_TOKENS["unk"], SPECIAL_TOKENS["pad"], SPECIAL_TOKENS["sos"], SPECIAL_TOKENS["eos"]]
-
-        src_vocab = build_vocab_from_iterator(self._iter_tokenized(train_src_iter, is_src=True),
-                                              min_freq=min_freq,
-                                              specials=specials)
+        src_vocab = build_vocab_from_iterator(
+            self._iter_tokenized(train_data, is_src=True),
+            min_freq=min_freq,
+            specials=specials
+        )
         src_vocab.set_default_index(src_vocab[SPECIAL_TOKENS["unk"]])
-
-        tgt_vocab = build_vocab_from_iterator(self._iter_tokenized(train_tgt_iter, is_src=False),
-                                              min_freq=min_freq,
-                                              specials=specials)
+        tgt_vocab = build_vocab_from_iterator(
+            self._iter_tokenized(train_data, is_src=False),
+            min_freq=min_freq,
+            specials=specials
+        )
         tgt_vocab.set_default_index(tgt_vocab[SPECIAL_TOKENS["unk"]])
-
-        # 适配旧接口：提供 .vocab.stoi / .vocab.itos
         self.source = SimpleNamespace(vocab=_VocabAdapter(src_vocab))
         self.target = SimpleNamespace(vocab=_VocabAdapter(tgt_vocab))
 
@@ -91,18 +117,16 @@ class DataLoader:
         return [vocab[token] for token in tokens]
 
     def _collate_fn(self, batch, device):
+        src_lang, tgt_lang = self._ext_to_lang_pair()
         src_batch_tokens = []
         tgt_batch_tokens = []
-
-        for src_text, tgt_text in batch:
-            src_tokens = self.tokenize_en(src_text.lower()) if self.ext[0] == ".en" else self.tokenize_de(src_text.lower())
-            tgt_tokens = self.tokenize_en(tgt_text.lower()) if self.ext[1] == ".en" else self.tokenize_de(tgt_text.lower())
-
-            src_tokens = [self.init_token] + src_tokens + [self.eos_token]
-            tgt_tokens = [self.init_token] + tgt_tokens + [self.eos_token]
-
-            src_batch_tokens.append(src_tokens)
-            tgt_batch_tokens.append(tgt_tokens)
+        for example in batch:
+            src_text = example[src_lang].lower()
+            tgt_text = example[tgt_lang].lower()
+            src_tokens = self.tokenize_en(src_text) if src_lang == "en" else self.tokenize_de(src_text)
+            tgt_tokens = self.tokenize_en(tgt_text) if tgt_lang == "en" else self.tokenize_de(tgt_text)
+            src_batch_tokens.append([self.init_token] + src_tokens + [self.eos_token])
+            tgt_batch_tokens.append([self.init_token] + tgt_tokens + [self.eos_token])
 
         pad_idx_src = self.source.vocab.stoi[SPECIAL_TOKENS["pad"]]
         pad_idx_tgt = self.target.vocab.stoi[SPECIAL_TOKENS["pad"]]
@@ -123,9 +147,9 @@ class DataLoader:
 
     def make_iter(self, train, validate, test, batch_size, device):
         collate = lambda batch: self._collate_fn(batch, device=device)
-        train_iterator = TorchDataLoader(list(train), batch_size=batch_size, shuffle=True, collate_fn=collate)
-        valid_iterator = TorchDataLoader(list(validate), batch_size=batch_size, shuffle=False, collate_fn=collate)
-        test_iterator = TorchDataLoader(list(test), batch_size=batch_size, shuffle=False, collate_fn=collate)
+        train_iterator = TorchDataLoader(train, batch_size=batch_size, shuffle=True, collate_fn=collate)
+        valid_iterator = TorchDataLoader(validate, batch_size=batch_size, shuffle=False, collate_fn=collate)
+        test_iterator = TorchDataLoader(test, batch_size=batch_size, shuffle=False, collate_fn=collate)
         self.logger.info("Dataset initializing done")
         return train_iterator, valid_iterator, test_iterator
 
@@ -136,7 +160,6 @@ class DataLoader:
         return ' '.join(tokens[start:end])
 
     def preview_iterators(self, train_iterator, valid_iterator, num_examples=2):
-        # train preview
         try:
             tb = next(iter(train_iterator))
             self.logger.info("[Preview][train] src shape: %s trg shape: %s", tuple(tb.src.shape), tuple(tb.trg.shape))
@@ -148,7 +171,6 @@ class DataLoader:
         except Exception as e:
             self.logger.exception("[Preview][train] failed: %s", e)
 
-        # valid preview
         try:
             vb = next(iter(valid_iterator))
             self.logger.info("[Preview][valid] src shape: %s trg shape: %s", tuple(vb.src.shape), tuple(vb.trg.shape))
