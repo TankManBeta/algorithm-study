@@ -1,12 +1,12 @@
-from torch import nn
-
 from models.layer.layer_norm import LayerNorm
 from models.layer.multi_head_attention import MultiHeadAttention
 from models.layer.position_wise_feed_forward import PositionwiseFeedForward
+from torch import nn
 
 
 class DecoderLayer(nn.Module):
     """Decoder layer with self-attention and encoder-decoder attention"""
+
     def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
         """
         Initialize DecoderLayer module.
@@ -40,7 +40,7 @@ class DecoderLayer(nn.Module):
         # 1. compute self attention
         _x = dec
         x = self.self_attention(q=dec, k=dec, v=dec, mask=trg_mask)
-        
+
         # 2. add and norm
         x = self.dropout1(x)
         x = self.norm1(x + _x)
@@ -49,7 +49,7 @@ class DecoderLayer(nn.Module):
             # 3. compute encoder - decoder attention
             _x = x
             x = self.enc_dec_attention(q=x, k=enc, v=enc, mask=src_mask)
-            
+
             # 4. add and norm
             x = self.dropout2(x)
             x = self.norm2(x + _x)
@@ -57,7 +57,7 @@ class DecoderLayer(nn.Module):
         # 5. positionwise feed forward network
         _x = x
         x = self.ffn(x)
-        
+
         # 6. add and norm
         x = self.dropout3(x)
         x = self.norm3(x + _x)

@@ -1,10 +1,10 @@
-from torch import nn
-
 from models.layer.scale_dot_product_attention import ScaleDotProductAttention
+from torch import nn
 
 
 class MultiHeadAttention(nn.Module):
     """Multi-head attention module"""
+
     def __init__(self, d_model, n_head):
         """
         Initialize MultiHeadAttention module.

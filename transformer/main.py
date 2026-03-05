@@ -1,19 +1,45 @@
-import os
-import math
-import time
-import wandb
 import logging
-from torch import nn, optim
-from torch.optim import Adam
+import math
+import os
+import time
 from datetime import datetime
 
-from conf import *
-from data import *
-from utils.util import progress_bar
-from utils.epoch_timer import epoch_time
-from utils.bleu import idx_to_word, get_bleu
+import torch
+import wandb
+from conf import (
+    adam_eps,
+    batch_size,
+    clip,
+    d_model,
+    device,
+    drop_prob,
+    epoch,
+    factor,
+    ffn_hidden,
+    init_lr,
+    max_len,
+    n_heads,
+    n_layers,
+    patience,
+    warmup,
+    weight_decay,
+)
+from data import (
+    dec_voc_size,
+    enc_voc_size,
+    loader,
+    src_pad_idx,
+    train_iter,
+    trg_pad_idx,
+    trg_sos_idx,
+    valid_iter,
+)
 from models.model.transformer import Transformer
-
+from torch import nn, optim
+from torch.optim import Adam
+from utils.bleu import get_bleu, idx_to_word
+from utils.epoch_timer import epoch_time
+from utils.util import progress_bar
 
 timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 dir_stat = os.path.join(os.path.dirname(__file__), "results", timestamp, "statistics")
@@ -26,7 +52,7 @@ logging.basicConfig(
     format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     filename=f"{dir_stat}/output.log",
-    filemode="a"
+    filemode="a",
 )
 logger = logging.getLogger(__name__)
 
@@ -41,8 +67,8 @@ wandb.init(
         "n_heads": n_heads,
         "lr": init_lr,
         "dropout": drop_prob,
-        "optimizer": "Adam"
-    }
+        "optimizer": "Adam",
+    },
 )
 
 
@@ -72,8 +98,8 @@ def train(model, iterator, optimizer, criterion, clip):
         optimizer.step()
 
         epoch_loss += loss.item()
-        
-        progress_bar(i, len(iterator), "Loss: %.3f" % (epoch_loss/(i+1)))
+
+        progress_bar(i, len(iterator), "Loss: %.3f" % (epoch_loss / (i + 1)))
         logger.info(f"Step: {round((i / len(iterator)) * 100, 2):.2f}% , loss: {loss.item()}")
 
     return epoch_loss / len(iterator)
@@ -102,12 +128,15 @@ def evaluate(model, iterator, criterion):
                     output_words = idx_to_word(output_words, loader.target.vocab)
                     bleu = get_bleu(hypotheses=output_words.split(), reference=trg_words.split())
                     total_bleu.append(bleu)
-                except:
+                except Exception as e:
+                    logger.error(f"Error occurred while calculating BLEU for batch {j}: {e}")
                     pass
 
             total_bleu = sum(total_bleu) / len(total_bleu)
             batch_bleu.append(total_bleu)
-            progress_bar(i, len(iterator), "Loss: %.3f | BLEU: %.3f" % (epoch_loss/(i+1), total_bleu))
+            progress_bar(
+                i, len(iterator), "Loss: %.3f | BLEU: %.3f" % (epoch_loss / (i + 1), total_bleu)
+            )
 
     batch_bleu = sum(batch_bleu) / len(batch_bleu)
     return epoch_loss / len(iterator), batch_bleu
@@ -133,43 +162,44 @@ def run(total_epoch, best_loss):
         logger.info(f"\tTrain Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f}")
         logger.info(f"\tValid Loss: {valid_loss:.3f} |  Valid PPL: {math.exp(valid_loss):7.3f}")
         logger.info(f"\tBLEU Score: {bleu:.3f}")
-        
-        wandb.log({
-            "epoch": step+1,
-            "train/loss": train_loss,
-            "valid/loss": valid_loss,
-            "valid/bleu": bleu,
-            "lr": optimizer.param_groups[0]["lr"]
-        })
+
+        wandb.log(
+            {
+                "epoch": step + 1,
+                "train/loss": train_loss,
+                "valid/loss": valid_loss,
+                "valid/bleu": bleu,
+                "lr": optimizer.param_groups[0]["lr"],
+            }
+        )
 
 
 if __name__ == "__main__":
-    model = Transformer(src_pad_idx=src_pad_idx,
-                        trg_pad_idx=trg_pad_idx,
-                        trg_sos_idx=trg_sos_idx,
-                        d_model=d_model,
-                        enc_voc_size=enc_voc_size,
-                        dec_voc_size=dec_voc_size,
-                        max_len=max_len,
-                        ffn_hidden=ffn_hidden,
-                        n_head=n_heads,
-                        n_layers=n_layers,
-                        drop_prob=drop_prob,
-                        device=device).to(device)
-    
+    model = Transformer(
+        src_pad_idx=src_pad_idx,
+        trg_pad_idx=trg_pad_idx,
+        trg_sos_idx=trg_sos_idx,
+        d_model=d_model,
+        enc_voc_size=enc_voc_size,
+        dec_voc_size=dec_voc_size,
+        max_len=max_len,
+        ffn_hidden=ffn_hidden,
+        n_head=n_heads,
+        n_layers=n_layers,
+        drop_prob=drop_prob,
+        device=device,
+    ).to(device)
+
     logger.info(f"The model has {count_parameters(model):,} trainable parameters")
     print(f"Using device: {device}")
     logger.info(f"Using device: {device}")
     model.apply(initialize_weights)
-    optimizer = Adam(params=model.parameters(),
-                    lr=init_lr,
-                    weight_decay=weight_decay,
-                    eps=adam_eps)
+    optimizer = Adam(params=model.parameters(), lr=init_lr, weight_decay=weight_decay, eps=adam_eps)
 
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer,
-                                                    factor=factor,
-                                                    patience=patience)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer=optimizer, factor=factor, patience=patience
+    )
 
     criterion = nn.CrossEntropyLoss(ignore_index=trg_pad_idx)
-    
+
     run(total_epoch=epoch, best_loss=math.inf)

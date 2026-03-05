@@ -3,6 +3,7 @@ from torch import nn
 
 class PositionwiseFeedForward(nn.Module):
     """Position-wise Feed Forward Network module"""
+
     def __init__(self, d_model, hidden, drop_prob=0.1):
         """
         Initialize PositionwiseFeedForward module.

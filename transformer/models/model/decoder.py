@@ -1,13 +1,14 @@
-import torch
-from torch import nn
-
 from models.block.decoder_layer import DecoderLayer
 from models.embedding.transformer_embedding import TransformerEmbedding
+from torch import nn
 
 
 class Decoder(nn.Module):
     """Transformer Decoder module"""
-    def __init__(self, dec_voc_size, max_len, d_model, ffn_hidden, n_head, n_layers, drop_prob, device):
+
+    def __init__(
+        self, dec_voc_size, max_len, d_model, ffn_hidden, n_head, n_layers, drop_prob, device
+    ):
         """
         Initialize Transformer Decoder module.
         :param dec_voc_size: vocabulary size of decoder
@@ -20,17 +21,22 @@ class Decoder(nn.Module):
         :param device: device to run the model on
         """
         super().__init__()
-        self.emb = TransformerEmbedding(d_model=d_model,
-                                        drop_prob=drop_prob,
-                                        max_len=max_len,
-                                        vocab_size=dec_voc_size,
-                                        device=device)
+        self.emb = TransformerEmbedding(
+            d_model=d_model,
+            drop_prob=drop_prob,
+            max_len=max_len,
+            vocab_size=dec_voc_size,
+            device=device,
+        )
 
-        self.layers = nn.ModuleList([DecoderLayer(d_model=d_model,
-                                                  ffn_hidden=ffn_hidden,
-                                                  n_head=n_head,
-                                                  drop_prob=drop_prob)
-                                     for _ in range(n_layers)])
+        self.layers = nn.ModuleList(
+            [
+                DecoderLayer(
+                    d_model=d_model, ffn_hidden=ffn_hidden, n_head=n_head, drop_prob=drop_prob
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
         self.linear = nn.Linear(d_model, dec_voc_size)
 

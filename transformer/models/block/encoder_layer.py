@@ -1,12 +1,12 @@
-from torch import nn
-
 from models.layer.layer_norm import LayerNorm
 from models.layer.multi_head_attention import MultiHeadAttention
 from models.layer.position_wise_feed_forward import PositionwiseFeedForward
+from torch import nn
 
 
 class EncoderLayer(nn.Module):
     """Encoder layer with self-attention and feed forward network"""
+
     def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
         """
         Initialize EncoderLayer module.
@@ -34,15 +34,15 @@ class EncoderLayer(nn.Module):
         # 1. compute self attention
         _x = x
         x = self.attention(q=x, k=x, v=x, mask=src_mask)
-        
+
         # 2. add and norm
         x = self.dropout1(x)
         x = self.norm1(x + _x)
-        
+
         # 3. positionwise feed forward network
         _x = x
         x = self.ffn(x)
-      
+
         # 4. add and norm
         x = self.dropout2(x)
         x = self.norm2(x + _x)
