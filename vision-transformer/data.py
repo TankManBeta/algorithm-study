@@ -17,7 +17,7 @@ transform_train = transforms.Compose(
     ]
 )
 
-transform_test = transforms.Compose(
+transform_val = transforms.Compose(
     [
         transforms.Resize(image_size),
         transforms.ToTensor(),
@@ -34,5 +34,5 @@ train_loader = torch.utils.data.DataLoader(
     train_set, batch_size=batch_size, shuffle=True, num_workers=8
 )
 
-test_set = dataset_class(root=root_path, train=False, download=True, transform=transform_test)
-test_loader = torch.utils.data.DataLoader(test_set, batch_size=100, shuffle=False, num_workers=8)
+val_set = dataset_class(root=root_path, train=False, download=True, transform=transform_val)
+val_loader = torch.utils.data.DataLoader(val_set, batch_size=100, shuffle=False, num_workers=8)

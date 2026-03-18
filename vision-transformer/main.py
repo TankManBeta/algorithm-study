@@ -23,7 +23,7 @@ from conf import (
     num_classes,
     patch_size,
 )
-from data import test_loader, train_loader
+from data import train_loader, val_loader
 from models.model.vision_transformer import VisionTransformer
 from utils.util import progress_bar
 
@@ -102,27 +102,27 @@ def train():
 
 
 # Validation
-def test(dir_stat, dir_ckpt):
+def evaluate(dir_stat, dir_ckpt):
     global best_acc
     net.eval()
-    test_loss = 0
+    val_loss = 0
     correct = 0
     total = 0
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_loader):
+        for batch_idx, (inputs, targets) in enumerate(val_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
 
-            test_loss += loss.item()
+            val_loss += loss.item()
             _, predicted = outputs.max(1)
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
             progress_bar(
                 batch_idx,
-                len(test_loader),
+                len(val_loader),
                 "Loss: %.3f | Acc: %.3f%% (%d/%d)"
-                % (test_loss / (batch_idx + 1), 100.0 * correct / total, correct, total),
+                % (val_loss / (batch_idx + 1), 100.0 * correct / total, correct, total),
             )
 
     # Save checkpoint.
@@ -145,11 +145,11 @@ def test(dir_stat, dir_ckpt):
         time.ctime()
         + " "
         + f"Epoch {epoch+1}, lr: {optimizer.param_groups[0]['lr']:.7f}, "
-        + f"val loss: {test_loss:.5f}, acc: {(acc):.5f}"
+        + f"val loss: {val_loss:.5f}, acc: {(acc):.5f}"
     )
     print(content)
     logger.info(content)
-    return test_loss, acc
+    return val_loss, acc
 
 
 if __name__ == "__main__":
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     for epoch in range(start_epoch, n_epochs):
         start = time.time()
         train_loss = train()
-        val_loss, acc = test(dir_stat, dir_ckpt)
+        val_loss, acc = evaluate(dir_stat, dir_ckpt)
 
         # step cosine scheduling
         scheduler.step(epoch - 1)
