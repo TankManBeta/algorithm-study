@@ -22,6 +22,7 @@ Each update may include:
 # 🔄 Updates
 - Update implementation of the transformer model. (2025/11/07)
 - Update implementation of the vision transformer model. (2025/11/07)
+- Update implementation of the swin transformer model. (2026/03/18)
 
 # 📚 References
 Some implementations and ideas are inspired by:
@@ -29,3 +30,5 @@ Some implementations and ideas are inspired by:
 - [transformer](https://github.com/hyunwoongko/transformer)
 - [vit-pytorch](https://github.com/lucidrains/vit-pytorch)
 - [vision-transformers-cifar10](https://github.com/kentaroy47/vision-transformers-cifar10)
+- [Swin-Transformer](https://github.com/WangFeng18/Swin-Transformer)
+- [Swin-Transformer](https://github.com/microsoft/Swin-Transformer)
